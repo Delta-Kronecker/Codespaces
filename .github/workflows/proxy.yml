@@ -75,35 +75,49 @@ jobs:
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "Tunnel: $URL"
 
+      - name: Health check configs
+        env:
+          TUNNEL: ${{ steps.tunnel.outputs.url }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          HOST="${TUNNEL#https://}"
+          TUNNEL_URI="vless://ca52e2b6-fb9f-4dac-b6dc-49da9923f251@${HOST}:443?encryption=none&security=tls&sni=${HOST}&fp=chrome&type=ws&host=${HOST}&path=%2F#Actions-Tunnel"
+          python3 .proxy/check.py .proxy/endpoints.txt \
+            --extra "$TUNNEL_URI" \
+            --out dist/sub.txt \
+            --report dist/report.txt
+          echo "--- healthy subscription ---"
+          cat dist/sub.txt
+
       - name: Build site
         env:
           TUNNEL: ${{ steps.tunnel.outputs.url }}
         run: |
           set -euo pipefail
-          HOST="${TUNNEL#https://}"
-          UUID="ca52e2b6-fb9f-4dac-b6dc-49da9923f251"
-          DIRECT="vless://${UUID}@209.200.246.148:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.cloudflare.com&fp=firefox&pbk=uTmb-ytXsx8p0fkBz7A76SHpWk7_oVutIA4LGTE8BQk&sid=f98843107912e782&type=tcp&headerType=none#Direct-REALITY"
-          VIA="vless://${UUID}@${HOST}:443?encryption=none&security=tls&sni=${HOST}&fp=chrome&type=ws&host=${HOST}&path=%2F#Actions-Tunnel"
-
-          rm -rf dist
-          mkdir -p dist
-          printf '%s\n%s\n' "$DIRECT" "$VIA" > dist/sub.txt
-          cp dist/sub.txt dist/subscription.txt
-
-          export DIRECT_URI="$DIRECT" TUNNEL_URI="$VIA" \
+          export TUNNEL \
                  BASE_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}" \
                  GENERATED_AT="$(date -u +%FT%TZ)"
           python3 - <<'PY'
-          import os, pathlib
+          import os, pathlib, re
           tpl = pathlib.Path(".proxy/index.tmpl.html").read_text(encoding="utf-8")
-          for key in ("BASE_URL", "TUNNEL", "DIRECT_URI", "TUNNEL_URI", "GENERATED_AT"):
-              tpl = tpl.replace("{{%s}}" % key, os.environ.get(key, ""))
+          sub = pathlib.Path("dist/sub.txt").read_text(encoding="utf-8").strip()
+          rep = pathlib.Path("dist/report.txt").read_text(encoding="utf-8").strip()
+          total = int(re.search(r"total:\s*(\d+)", rep).group(1))
+          healthy = int(re.search(r"healthy:\s*(\d+)", rep).group(1))
+          for k, v in {
+              "TUNNEL": os.environ.get("TUNNEL", ""),
+              "BASE_URL": os.environ.get("BASE_URL", ""),
+              "GENERATED_AT": os.environ.get("GENERATED_AT", ""),
+              "SUB_CONTENT": sub,
+              "REPORT": rep,
+              "TOTAL": str(total),
+              "HEALTHY": str(healthy),
+          }.items():
+              tpl = tpl.replace("{{%s}}" % k, v)
           pathlib.Path("dist/index.html").write_text(tpl, encoding="utf-8")
           PY
-
-          echo "--- dist ---"
           ls -la dist
-          cat dist/sub.txt
 
       - name: Publish to gh-pages
         env:
@@ -128,5 +142,5 @@ jobs:
           H="${DURATION_HOURS:-5}"
           case "$H" in ''|*[!0-9]*) H=5 ;; esac
           if [ "$H" -gt 6 ]; then H=6; fi
-          echo "Keeping tunnel up for ${H}h (until job timeout) ..."
+          echo "Keeping tunnel up for ${H}h ..."
           sleep $(( H * 3600 ))
