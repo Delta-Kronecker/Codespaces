@@ -279,22 +279,31 @@ def main():
         lines.append(row)
         print(row, flush=True)
         if ok:
-            healthy.append(uri)
+            healthy.append((dt, uri, e["endpoint"]))
+
+    healthy.sort(key=lambda x: x[0])
+    uris_sorted = [u for _, u, _ in healthy]
+
+    if healthy:
+        lines.append("")
+        lines.append("fastest first:")
+        for dt, _, ep in healthy[:5]:
+            lines.append(f"  {dt:5.2f}s  {ep}")
 
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(
-            "\n".join(healthy) + ("\n" if healthy else ""), encoding="utf-8"
+            "\n".join(uris_sorted) + ("\n" if uris_sorted else ""), encoding="utf-8"
         )
     if args.report:
         Path(args.report).parent.mkdir(parents=True, exist_ok=True)
         Path(args.report).write_text(
             f"generated: {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n"
-            f"total: {len(ordered)}   healthy: {len(healthy)}\n\n" + "\n".join(lines) + "\n",
+            f"total: {len(ordered)}   healthy: {len(uris_sorted)}\n\n" + "\n".join(lines) + "\n",
             encoding="utf-8",
         )
-    print(f"\nhealthy {len(healthy)}/{len(ordered)}", flush=True)
-    if not healthy:
+    print(f"\nhealthy {len(uris_sorted)}/{len(ordered)}", flush=True)
+    if not uris_sorted:
         print("::warning::no healthy upstream found")
 
 
