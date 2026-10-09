@@ -101,12 +101,36 @@ jobs:
           NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
         run: |
           set -euo pipefail
-          curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
-            | sudo tee /etc/apt/keyrings/ngrok.asc >/dev/null
-          echo "deb [signed-by=/etc/apt/keyrings/ngrok.asc] https://apt.ngrok.com/ngrok stable main" \
-            | sudo tee /etc/apt/sources.list.d/ngrok.list >/dev/null
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ngrok
+
+          install_ngrok() {
+            for url in \
+              "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz" \
+              "https://ngrok-agent.s3.amazonaws.com/ngrok-v3-stable-linux-amd64.tgz" \
+              "https://ngrok-agent.s3.amazonaws.com/ngrok-stable-linux-amd64.tgz"
+            do
+              echo "trying $url"
+              if curl -fsSL --connect-timeout 20 -o /tmp/ngrok.tgz "$url"; then
+                tar xzf /tmp/ngrok.tgz -C /tmp
+                if [ -f /tmp/ngrok ]; then
+                  sudo install -m755 /tmp/ngrok /usr/local/bin/ngrok
+                  echo "installed from $url"
+                  return 0
+                fi
+              fi
+            done
+            echo "--- apt fallback ---"
+            curl -fsSL --connect-timeout 20 -o /tmp/ngrok.asc \
+              https://ngrok-agent.s3.amazonaws.com/ngrok.asc
+            sudo mkdir -p /etc/apt/keyrings
+            sudo cp /tmp/ngrok.asc /etc/apt/keyrings/ngrok.asc
+            echo "deb [signed-by=/etc/apt/keyrings/ngrok.asc] https://apt.ngrok.com/ngrok stable main" \
+              | sudo tee /etc/apt/sources.list.d/ngrok.list >/dev/null
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ngrok
+          }
+
+          install_ngrok
+          command -v ngrok
           ngrok version
 
           ngrok config add-authtoken "$NGROK_AUTHTOKEN" >/dev/null
