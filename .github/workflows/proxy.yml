@@ -8,7 +8,7 @@ on:
         required: false
         default: "5"
       tunnel:
-        description: "Tunnel provider: bore (no data cap) or ngrok (1GB/month)"
+        description: "Tunnel provider: bore (default, no data cap), ssh (serveo/localhost.run, no account), ngrok (1GB/month)"
         required: false
         default: "bore"
   schedule:
@@ -49,7 +49,7 @@ jobs:
           echo "provider: $TUNNEL_PROVIDER"
 
       - name: Load or create REALITY keys
-        if: env.TUNNEL_PROVIDER == 'bore'
+        if: env.TUNNEL_PROVIDER != 'ngrok'
         run: |
           set -euo pipefail
           F=.proxy/reality.json
@@ -108,7 +108,7 @@ jobs:
           CHAIN="$(head -n1 dist/upstreams.txt)"
           echo "Fastest: $(awk '/fastest first:/{getline; print $1, $2}' dist/report.txt)"
           echo "Chaining to: $CHAIN"
-          if [ "$TUNNEL_PROVIDER" = "bore" ]; then
+          if [ "$TUNNEL_PROVIDER" != "ngrok" ]; then
             python3 .proxy/check.py --emit-server "$CHAIN" \
               --emit-out "$HOME/xray/server.json" \
               --emit-listen 127.0.0.1 --emit-port "$BORE_LOCAL_PORT" \
@@ -125,7 +125,7 @@ jobs:
       - name: Start Xray server
         run: |
           set -euo pipefail
-          PORT="$([ "$TUNNEL_PROVIDER" = "bore" ] && echo "$BORE_LOCAL_PORT" || echo "$NGROK_LOCAL_PORT")"
+          PORT="$([ "$TUNNEL_PROVIDER" != "ngrok" ] && echo "$BORE_LOCAL_PORT" || echo "$NGROK_LOCAL_PORT")"
           nohup "$HOME/xray/xray" run -c "$HOME/xray/server.json" \
             >>"$HOME/xray/log/xray.log" 2>&1 &
           for _ in $(seq 1 20); do
@@ -142,7 +142,7 @@ jobs:
         id: chain
         run: |
           set -euo pipefail
-          if [ "$TUNNEL_PROVIDER" = "bore" ]; then
+          if [ "$TUNNEL_PROVIDER" != "ngrok" ]; then
             U="vless://${TUNNEL_UUID}@127.0.0.1:${BORE_LOCAL_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${PUB}&sid=${SID}&type=tcp&headerType=none#local-chain"
           else
             U="vless://${TUNNEL_UUID}@127.0.0.1:${NGROK_LOCAL_PORT}?encryption=none&security=none&type=ws&path=%2F#local-chain"
@@ -224,9 +224,54 @@ jobs:
           echo "url=$ENDPOINT" >> "$GITHUB_OUTPUT"
           echo "Tunnel: $ENDPOINT"
 
+      - name: Start ssh tunnel
+        id: ssh
+        if: env.TUNNEL_PROVIDER == 'ssh'
+        run: |
+          set -euo pipefail
+          LOG="$HOME/xray/log/ssh.log"
+          : > "$LOG"
+          O=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+             -o ServerAliveInterval=20 -o ServerAliveCountMax=3
+             -o ExitOnForwardFailure=yes -o ConnectTimeout=20)
+
+          ENDPOINT=""
+          for TARGET in nokey@localhost.run serveo.net pwn.sh nokey@ssh.localhost.run; do
+            echo "trying $TARGET"
+            : > "$LOG"
+            nohup ssh "${O[@]}" -R 0:127.0.0.1:"$BORE_LOCAL_PORT" "$TARGET" >>"$LOG" 2>&1 &
+            PID=$!
+            EP=""
+            for _ in $(seq 1 30); do
+              EP=$(grep -Eo '(tcp|https?)://[A-Za-z0-9.-]+:[0-9]+' "$LOG" 2>/dev/null \
+                   | tail -1 | sed -E 's#^(tcp|https?)://##' || true)
+              if [ -z "$EP" ]; then
+                EP=$(grep -Eo '[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+:[0-9]{4,5}' "$LOG" 2>/dev/null | tail -1 || true)
+              fi
+              if [ -n "$EP" ] && kill -0 "$PID" 2>/dev/null; then break; fi
+              if ! kill -0 "$PID" 2>/dev/null; then break; fi
+              sleep 2
+            done
+            if [ -n "$EP" ] && kill -0 "$PID" 2>/dev/null; then
+              ENDPOINT="$EP"
+              break
+            fi
+            echo "$TARGET did not report a usable endpoint"
+            kill "$PID" 2>/dev/null || true
+            sleep 2
+          done
+
+          if [ -z "$ENDPOINT" ]; then
+            echo "::error::no ssh tunnel provider was reachable"
+            tail -80 "$LOG" || true
+            exit 1
+          fi
+          echo "url=$ENDPOINT" >> "$GITHUB_OUTPUT"
+          echo "Tunnel: $ENDPOINT"
+
       - name: Start ngrok tunnel
         id: ngrok
-        if: env.TUNNEL_PROVIDER != 'bore'
+        if: env.TUNNEL_PROVIDER == 'ngrok'
         env:
           NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
         run: |
@@ -285,10 +330,10 @@ jobs:
       - name: Verify end to end through the tunnel
         id: verify
         env:
-          TUNNEL: ${{ env.TUNNEL_PROVIDER == 'bore' && steps.bore.outputs.url || steps.ngrok.outputs.url }}
+          TUNNEL: ${{ env.TUNNEL_PROVIDER == 'ssh' && steps.ssh.outputs.url || env.TUNNEL_PROVIDER == 'bore' && steps.bore.outputs.url || steps.ngrok.outputs.url }}
         run: |
           set -euo pipefail
-          if [ "$TUNNEL_PROVIDER" = "bore" ]; then
+          if [ "$TUNNEL_PROVIDER" != "ngrok" ]; then
             HOST="${TUNNEL%%:*}"
             PORT="${TUNNEL##*:}"
             TUNNEL_URI="vless://${TUNNEL_UUID}@${HOST}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${PUB}&sid=${SID}&type=tcp&headerType=none#Proxy"
@@ -317,6 +362,7 @@ jobs:
             echo "::warning::tunnel is NOT reachable end to end after 8 attempts"
             echo "--- tunnel log ---"
             tail -80 "$HOME/xray/log/bore.log" 2>/dev/null || true
+            tail -80 "$HOME/xray/log/ssh.log" 2>/dev/null || true
             tail -80 "$HOME/xray/log/ngrok.log" 2>/dev/null || true
             echo "--- xray server log ---"
             tail -80 "$HOME/xray/log/xray.log" || true
@@ -324,7 +370,7 @@ jobs:
 
       - name: Build site
         env:
-          TUNNEL: ${{ env.TUNNEL_PROVIDER == 'bore' && steps.bore.outputs.url || steps.ngrok.outputs.url }}
+          TUNNEL: ${{ env.TUNNEL_PROVIDER == 'ssh' && steps.ssh.outputs.url || env.TUNNEL_PROVIDER == 'bore' && steps.bore.outputs.url || steps.ngrok.outputs.url }}
         run: |
           set -euo pipefail
           export TUNNEL \
