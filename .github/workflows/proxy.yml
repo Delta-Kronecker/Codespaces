@@ -53,18 +53,21 @@ jobs:
         run: |
           set -euo pipefail
           OUT=$("$HOME/xray/xray" x25519)
-          echo "$OUT"
           PRIV=$(printf '%s\n' "$OUT" | sed -n 's/.*[Pp]rivate[^:]*: *//p' | head -1)
           PUB=$(printf '%s\n' "$OUT" | sed -n 's/.*[Pp]ublic[^:]*: *//p' | head -1)
           SID=$(openssl rand -hex 8)
-          if [ -z "$PRIV" ] || [ -z "$PUB" ]; then
-            echo "::error::could not parse x25519 output"
+          if [ -z "$PRIV" ] || [ -z "$PUB" ] || [ -z "$SID" ]; then
+            echo "::error::could not generate REALITY keys"
             exit 1
           fi
-          echo "priv=$PRIV"   >> "$GITHUB_ENV"
-          echo "pub=$PUB"     >> "$GITHUB_ENV"
-          echo "sid=$SID"     >> "$GITHUB_ENV"
-          echo "sni=addons.mozilla.org" >> "$GITHUB_ENV"
+          echo "::add-mask::$PRIV"
+          echo "::add-mask::$PUB"
+          echo "::add-mask::$SID"
+          echo "REALITY keys generated (sid=$SID)"
+          echo "PRIV=$PRIV"   >> "$GITHUB_ENV"
+          echo "PUB=$PUB"     >> "$GITHUB_ENV"
+          echo "SID=$SID"     >> "$GITHUB_ENV"
+          echo "SNI=addons.mozilla.org" >> "$GITHUB_ENV"
 
       - name: Test every upstream through a proxy
         run: |
