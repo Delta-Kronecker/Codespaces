@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Health-check vless:// URIs with Xray and emit only the healthy ones."""
+"""Test vless:// URIs by chaining them behind a local socks inbound."""
 
 import argparse
 import json
@@ -13,9 +13,10 @@ import urllib.parse
 from pathlib import Path
 
 XRAY = os.environ.get("XRAY", os.path.expanduser("~/xray/xray"))
-TEST_URL = os.environ.get("TEST_URL", "http://www.gstatic.com/generate_204")
+TEST_URL = os.environ.get("TEST_URL", "https://www.gstatic.com/generate_204")
 PER_TEST = int(os.environ.get("PER_TEST", "12"))
 OK_CODES = {"200", "204", "301", "302", "307", "308"}
+TUNNEL_UUID = "ca52e2b6-fb9f-4dac-b6dc-49da9923f251"
 
 URI_RE = re.compile(
     r"^vless://(?P<uuid>[^@]+)@(?P<addr>[^:/?#]+):(?P<port>\d+)"
@@ -49,7 +50,7 @@ def parse(uri: str):
     }
 
 
-def build_client(e, port: int) -> dict:
+def build_outbound(e) -> dict:
     stream = {"network": e["network"]}
     if e["security"] == "reality":
         stream["security"] = "reality"
@@ -72,6 +73,24 @@ def build_client(e, port: int) -> dict:
         stream["tcpSettings"] = {"header": {"type": "none"}}
 
     return {
+        "protocol": "vless",
+        "settings": {
+            "vnext": [
+                {
+                    "address": e["address"],
+                    "port": e["port"],
+                    "users": [
+                        {"id": e["uuid"], "encryption": "none", "flow": e["flow"]}
+                    ],
+                }
+            ]
+        },
+        "streamSettings": stream,
+    }
+
+
+def probe(e, port: int):
+    cfg = {
         "log": {"loglevel": "none"},
         "inbounds": [
             {
@@ -81,32 +100,8 @@ def build_client(e, port: int) -> dict:
                 "settings": {"udp": False},
             }
         ],
-        "outbounds": [
-            {
-                "protocol": "vless",
-                "settings": {
-                    "vnext": [
-                        {
-                            "address": e["address"],
-                            "port": e["port"],
-                            "users": [
-                                {
-                                    "id": e["uuid"],
-                                    "encryption": "none",
-                                    "flow": e["flow"],
-                                }
-                            ],
-                        }
-                    ]
-                },
-                "streamSettings": stream,
-            }
-        ],
+        "outbounds": [build_outbound(e)],
     }
-
-
-def probe(e, port: int):
-    cfg = build_client(e, port)
     fd, path = tempfile.mkstemp(suffix=".json")
     os.close(fd)
     Path(path).write_text(json.dumps(cfg), encoding="utf-8")
@@ -124,8 +119,9 @@ def probe(e, port: int):
             except OSError:
                 time.sleep(0.25)
         else:
-            return False, "inbound-never-listened"
+            return False, "xray-inbound-dead", 0.0
 
+        t0 = time.time()
         r = subprocess.run(
             [
                 "curl",
@@ -143,10 +139,12 @@ def probe(e, port: int):
             capture_output=True,
             text=True,
         )
+        dt = time.time() - t0
         code = (r.stdout or "").strip()
         if code in OK_CODES:
-            return True, code
-        return False, code or (r.stderr or "").strip().splitlines()[-1][:70] if r.stderr else "no-code"
+            return True, f"http {code}", dt
+        err = (r.stderr or "").strip().splitlines()
+        return False, (f"http {code}" if code else (err[-1][:60] if err else "no-code")), dt
     finally:
         proc.terminate()
         try:
@@ -157,14 +155,54 @@ def probe(e, port: int):
         os.unlink(path)
 
 
+def emit_server(uri: str, out_path: str, listen: str, port: int):
+    e = parse(uri)
+    if e is None:
+        raise SystemExit(f"cannot parse: {uri}")
+    cfg = {
+        "log": {"loglevel": "warning"},
+        "inbounds": [
+            {
+                "tag": "public-ws",
+                "port": port,
+                "listen": listen,
+                "protocol": "vless",
+                "settings": {
+                    "clients": [{"id": TUNNEL_UUID, "flow": "", "level": 0}],
+                    "decryption": "none",
+                },
+                "streamSettings": {
+                    "network": "ws",
+                    "security": "none",
+                    "wsSettings": {"path": "/"},
+                },
+                "sniffing": {"enabled": True, "destOverride": ["http", "tls"]},
+            }
+        ],
+        "outbounds": [build_outbound(e)],
+    }
+    Path(out_path).write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    print(f"server config -> {out_path}  (upstream {e['endpoint']} {e['network']})")
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("files", nargs="+")
+    ap.add_argument("files", nargs="*")
     ap.add_argument("--extra", action="append", default=[])
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--report", required=True)
+    ap.add_argument("--out")
+    ap.add_argument("--report")
     ap.add_argument("--port-base", type=int, default=21000)
+    ap.add_argument("--emit-server")
+    ap.add_argument("--emit-out")
+    ap.add_argument("--emit-listen", default="0.0.0.0")
+    ap.add_argument("--emit-port", type=int, default=10000)
     args = ap.parse_args()
+
+    if args.emit_server:
+        if not args.emit_out:
+            raise SystemExit("--emit-server requires --emit-out")
+        emit_server(args.emit_server, args.emit_out, args.emit_listen, args.emit_port)
+        return
 
     uris = []
     for f in args.files:
@@ -185,26 +223,31 @@ def main():
     for i, uri in enumerate(ordered):
         e = parse(uri)
         if e is None:
-            lines.append(f"FAIL  (unparseable)  {uri[:80]}")
+            lines.append(f"FAIL  {'unparseable':<34} {uri[:70]}")
             continue
-        ok, detail = probe(e, args.port_base + i)
+        ok, detail, dt = probe(e, args.port_base + i)
         tag = "OK  " if ok else "FAIL"
-        lines.append(f"{tag}  {e['endpoint']:<28} {e['network']:<5} {detail}")
-        print(f"{tag}  {e['endpoint']:<28} {e['network']:<5} {detail}", flush=True)
+        row = f"{tag}  {e['endpoint']:<34} {e['network']}/{e['security']:<8} {detail:<10} {dt:5.2f}s"
+        lines.append(row)
+        print(row, flush=True)
         if ok:
             healthy.append(uri)
 
-    Path(args.out).write_text(
-        "\n".join(healthy) + ("\n" if healthy else ""), encoding="utf-8"
-    )
-    Path(args.report).write_text(
-        f"generated: {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n"
-        f"total: {len(ordered)}   healthy: {len(healthy)}\n\n" + "\n".join(lines) + "\n",
-        encoding="utf-8",
-    )
-    print(f"\nhealthy {len(healthy)}/{len(ordered)} -> {args.out}", flush=True)
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(
+            "\n".join(healthy) + ("\n" if healthy else ""), encoding="utf-8"
+        )
+    if args.report:
+        Path(args.report).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.report).write_text(
+            f"generated: {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n"
+            f"total: {len(ordered)}   healthy: {len(healthy)}\n\n" + "\n".join(lines) + "\n",
+            encoding="utf-8",
+        )
+    print(f"\nhealthy {len(healthy)}/{len(ordered)}", flush=True)
     if not healthy:
-        print("::warning::no healthy config found")
+        print("::warning::no healthy upstream found")
 
 
 if __name__ == "__main__":

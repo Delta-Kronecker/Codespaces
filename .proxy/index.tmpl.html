@@ -3,39 +3,39 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Subscription</title>
+<title>Proxy</title>
 <style>
   body{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0d1117;color:#c9d1d9;
-       margin:0;padding:2rem;max-width:62rem;margin-inline:auto;line-height:1.8}
+       margin:0;padding:2rem;max-width:64rem;margin-inline:auto;line-height:1.8}
   h1{font-size:1.15rem;color:#58a6ff;margin-top:0}
   a{color:#58a6ff;word-break:break-all}
   .box{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;margin:1rem 0}
   .lbl{color:#8b949e;font-size:.8rem;margin-bottom:.4rem}
   pre{white-space:pre-wrap;word-break:break-all;background:#21262d;padding:.8rem;border-radius:6px;
-      border:1px solid #30363d;font-size:.75rem;margin:.4rem 0 0}
-  .ok{color:#3fb950}.bad{color:#f85149}
+      border:1px solid #30363d;font-size:.75rem;margin:.4rem 0 0;direction:ltr;text-align:left}
 </style>
 </head>
 <body>
-<h1>اشتراک — فقط کانفیگ‌های سالم</h1>
+<h1>پروکسی — اتصال از طریق تونل</h1>
 
 <div class="box">
-  <div class="lbl">SUBSCRIPTION URL</div>
+  <div class="lbl">SUBSCRIPTION (only the tunnel)</div>
   <a href="sub.txt">{{BASE_URL}}/sub.txt</a>
-</div>
-
-<div class="box">
-  <div class="lbl">نتیجه‌ی تست ({{HEALTHY}} / {{TOTAL}} سالم)</div>
-  <pre>{{REPORT}}</pre>
-</div>
-
-<div class="box">
-  <div class="lbl">کانفیگ‌های سالم (ترتیب اتصال)</div>
   <pre>{{SUB_CONTENT}}</pre>
 </div>
 
 <div class="box">
-  <div class="lbl">تونل Actions (در صورت سالم بودن)</div>
+  <div class="lbl">VERIFY — end to end through the tunnel</div>
+  <pre>{{VERIFY}}</pre>
+</div>
+
+<div class="box">
+  <div class="lbl">UPSTREAMS — chained behind the tunnel ({{HEALTHY}}/{{TOTAL}} alive)</div>
+  <pre>{{REPORT}}</pre>
+</div>
+
+<div class="box">
+  <div class="lbl">tunnel</div>
   <a href="{{TUNNEL}}">{{TUNNEL}}</a>
   <pre>{{GENERATED_AT}}</pre>
 </div>

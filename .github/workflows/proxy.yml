@@ -36,18 +36,42 @@ jobs:
           chmod +x "$HOME/xray/xray"
           "$HOME/xray/xray" version | head -1
 
-      - name: Start Xray inbound
+      - name: Test every upstream through a proxy
         run: |
           set -euo pipefail
-          cp .proxy/inbound.json "$HOME/xray/inbound.json"
-          nohup "$HOME/xray/xray" run -c "$HOME/xray/inbound.json" \
+          mkdir -p dist
+          python3 .proxy/check.py .proxy/endpoints.txt \
+            --out dist/upstreams.txt \
+            --report dist/report.txt
+          echo "--- alive upstreams ---"
+          cat dist/upstreams.txt
+          if [ ! -s dist/upstreams.txt ]; then
+            echo "::error::no upstream is alive"
+            exit 1
+          fi
+
+      - name: Chain runner to the first alive upstream
+        run: |
+          set -euo pipefail
+          CHAIN="$(head -n1 dist/upstreams.txt)"
+          echo "Chaining to: $CHAIN"
+          python3 .proxy/check.py --emit-server "$CHAIN" \
+            --emit-out "$HOME/xray/server.json" \
+            --emit-listen 0.0.0.0 --emit-port 10000
+          python3 -m json.tool "$HOME/xray/server.json" > /dev/null
+          echo "chain=$CHAIN" >> "$GITHUB_ENV"
+
+      - name: Start Xray server
+        run: |
+          set -euo pipefail
+          nohup "$HOME/xray/xray" run -c "$HOME/xray/server.json" \
             >>"$HOME/xray/log/xray.log" 2>&1 &
           for _ in $(seq 1 20); do
             ss -ltn | grep -q ':10000 ' && break
             sleep 1
           done
           if ! ss -ltn | grep -q ':10000 '; then
-            echo "::error::xray inbound did not start"
+            echo "::error::xray server did not start"
             tail -40 "$HOME/xray/log/xray.log"
             exit 1
           fi
@@ -75,20 +99,25 @@ jobs:
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "Tunnel: $URL"
 
-      - name: Health check configs
+      - name: Verify end to end through the tunnel
+        id: verify
         env:
           TUNNEL: ${{ steps.tunnel.outputs.url }}
+          TUNNEL_UUID: ca52e2b6-fb9f-4dac-b6dc-49da9923f251
         run: |
           set -euo pipefail
-          mkdir -p dist
           HOST="${TUNNEL#https://}"
-          TUNNEL_URI="vless://ca52e2b6-fb9f-4dac-b6dc-49da9923f251@${HOST}:443?encryption=none&security=tls&sni=${HOST}&fp=chrome&type=ws&host=${HOST}&path=%2F#Actions-Tunnel"
-          python3 .proxy/check.py .proxy/endpoints.txt \
-            --extra "$TUNNEL_URI" \
-            --out dist/sub.txt \
-            --report dist/report.txt
-          echo "--- healthy subscription ---"
-          cat dist/sub.txt
+          TUNNEL_URI="vless://${TUNNEL_UUID}@${HOST}:443?encryption=none&security=tls&sni=${HOST}&fp=chrome&type=ws&host=${HOST}&path=%2F#Proxy"
+          python3 .proxy/check.py --extra "$TUNNEL_URI" \
+            --out /tmp/verify.txt --report /tmp/verify.report
+          cat /tmp/verify.report | tee dist/verify.txt
+          if [ ! -s /tmp/verify.txt ]; then
+            echo "::warning::tunnel is NOT reachable end to end"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+          printf '%s\n' "$TUNNEL_URI" > dist/sub.txt
 
       - name: Build site
         env:
@@ -101,15 +130,16 @@ jobs:
           python3 - <<'PY'
           import os, pathlib, re
           tpl = pathlib.Path(".proxy/index.tmpl.html").read_text(encoding="utf-8")
-          sub = pathlib.Path("dist/sub.txt").read_text(encoding="utf-8").strip()
           rep = pathlib.Path("dist/report.txt").read_text(encoding="utf-8").strip()
+          ver = pathlib.Path("dist/verify.txt").read_text(encoding="utf-8").strip()
           total = int(re.search(r"total:\s*(\d+)", rep).group(1))
           healthy = int(re.search(r"healthy:\s*(\d+)", rep).group(1))
           for k, v in {
               "TUNNEL": os.environ.get("TUNNEL", ""),
               "BASE_URL": os.environ.get("BASE_URL", ""),
               "GENERATED_AT": os.environ.get("GENERATED_AT", ""),
-              "SUB_CONTENT": sub,
+              "SUB_CONTENT": pathlib.Path("dist/sub.txt").read_text(encoding="utf-8").strip(),
+              "VERIFY": ver,
               "REPORT": rep,
               "TOTAL": str(total),
               "HEALTHY": str(healthy),
