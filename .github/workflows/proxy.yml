@@ -1,0 +1,132 @@
+name: public-proxy
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_hours:
+        description: "Keep the tunnel alive for N hours (max 6)"
+        required: false
+        default: "5"
+  schedule:
+    - cron: "17 */5 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: public-proxy
+  cancel-in-progress: false
+
+jobs:
+  proxy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Xray-core
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/xray/log"
+          curl -fsSL -o /tmp/xray.zip \
+            https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+          python3 -c "import zipfile,os; zipfile.ZipFile('/tmp/xray.zip').extractall(os.path.expanduser('~/xray'))"
+          chmod +x "$HOME/xray/xray"
+          "$HOME/xray/xray" version | head -1
+
+      - name: Start Xray inbound
+        run: |
+          set -euo pipefail
+          cp .proxy/inbound.json "$HOME/xray/inbound.json"
+          nohup "$HOME/xray/xray" run -c "$HOME/xray/inbound.json" \
+            >>"$HOME/xray/log/xray.log" 2>&1 &
+          for _ in $(seq 1 20); do
+            ss -ltn | grep -q ':10000 ' && break
+            sleep 1
+          done
+          if ! ss -ltn | grep -q ':10000 '; then
+            echo "::error::xray inbound did not start"
+            tail -40 "$HOME/xray/log/xray.log"
+            exit 1
+          fi
+
+      - name: Start cloudflared quick tunnel
+        id: tunnel
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/cloudflared \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x /tmp/cloudflared
+          nohup /tmp/cloudflared tunnel --url http://127.0.0.1:10000 --no-autoupdate \
+            >>"$HOME/xray/log/cloudflared.log" 2>&1 &
+          URL=""
+          for _ in $(seq 1 90); do
+            URL=$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' "$HOME/xray/log/cloudflared.log" | head -1 || true)
+            if [ -n "$URL" ]; then break; fi
+            sleep 2
+          done
+          if [ -z "$URL" ]; then
+            echo "::error::cloudflared did not return a URL"
+            tail -60 "$HOME/xray/log/cloudflared.log"
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Tunnel: $URL"
+
+      - name: Build site
+        env:
+          TUNNEL: ${{ steps.tunnel.outputs.url }}
+        run: |
+          set -euo pipefail
+          HOST="${TUNNEL#https://}"
+          UUID="ca52e2b6-fb9f-4dac-b6dc-49da9923f251"
+          DIRECT="vless://${UUID}@209.200.246.148:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.cloudflare.com&fp=firefox&pbk=uTmb-ytXsx8p0fkBz7A76SHpWk7_oVutIA4LGTE8BQk&sid=f98843107912e782&type=tcp&headerType=none#Direct-REALITY"
+          VIA="vless://${UUID}@${HOST}:443?encryption=none&security=tls&sni=${HOST}&fp=chrome&type=ws&host=${HOST}&path=%2F#Actions-Tunnel"
+
+          rm -rf dist
+          mkdir -p dist
+          printf '%s\n%s\n' "$DIRECT" "$VIA" > dist/sub.txt
+          cp dist/sub.txt dist/subscription.txt
+
+          export DIRECT_URI="$DIRECT" TUNNEL_URI="$VIA" \
+                 BASE_URL="https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}" \
+                 GENERATED_AT="$(date -u +%FT%TZ)"
+          python3 - <<'PY'
+          import os, pathlib
+          tpl = pathlib.Path(".proxy/index.tmpl.html").read_text(encoding="utf-8")
+          for key in ("BASE_URL", "TUNNEL", "DIRECT_URI", "TUNNEL_URI", "GENERATED_AT"):
+              tpl = tpl.replace("{{%s}}" % key, os.environ.get(key, ""))
+          pathlib.Path("dist/index.html").write_text(tpl, encoding="utf-8")
+          PY
+
+          echo "--- dist ---"
+          ls -la dist
+          cat dist/sub.txt
+
+      - name: Publish to gh-pages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd dist
+          git init -q
+          git checkout -q -B gh-pages
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -q -m "site $(date -u +%FT%TZ)"
+          git push -q --force \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
+
+      - name: Keep tunnel alive
+        env:
+          DURATION_HOURS: ${{ github.event.inputs.duration_hours }}
+        run: |
+          set -euo pipefail
+          H="${DURATION_HOURS:-5}"
+          case "$H" in ''|*[!0-9]*) H=5 ;; esac
+          if [ "$H" -gt 6 ]; then H=6; fi
+          echo "Keeping tunnel up for ${H}h (until job timeout) ..."
+          sleep $(( H * 3600 ))
