@@ -76,6 +76,25 @@ jobs:
             exit 1
           fi
 
+      - name: Diagnose chain without the tunnel
+        id: chain
+        env:
+          TUNNEL_UUID: ca52e2b6-fb9f-4dac-b6dc-49da9923f251
+        run: |
+          set -euo pipefail
+          U="vless://${TUNNEL_UUID}@127.0.0.1:10000?encryption=none&security=none&type=ws&path=%2F#local-chain"
+          python3 .proxy/check.py --extra "$U" --out /tmp/chain.txt --report /tmp/chain.report || true
+          cat /tmp/chain.report
+          if [ -s /tmp/chain.txt ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "chain is OK -> suspect the tunnel"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::chain itself is broken (client -> xray -> upstream)"
+            echo "--- xray server log ---"
+            tail -80 "$HOME/xray/log/xray.log" || true
+          fi
+
       - name: Start cloudflared quick tunnel
         id: tunnel
         run: |
@@ -127,6 +146,10 @@ jobs:
           else
             echo "ok=false" >> "$GITHUB_OUTPUT"
             echo "::warning::tunnel is NOT reachable end to end after 12 attempts"
+            echo "--- cloudflared log ---"
+            tail -80 "$HOME/xray/log/cloudflared.log" || true
+            echo "--- xray server log ---"
+            tail -80 "$HOME/xray/log/xray.log" || true
           fi
 
       - name: Build site
