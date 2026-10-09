@@ -141,10 +141,11 @@ def probe(e, port: int):
         )
         dt = time.time() - t0
         code = (r.stdout or "").strip()
+        err = (r.stderr or "").strip().splitlines()
+        why = err[-1][:70] if err else ""
         if code in OK_CODES:
             return True, f"http {code}", dt
-        err = (r.stderr or "").strip().splitlines()
-        return False, (f"http {code}" if code else (err[-1][:60] if err else "no-code")), dt
+        return False, f"http {code} {why}".strip(), dt
     finally:
         proc.terminate()
         try:

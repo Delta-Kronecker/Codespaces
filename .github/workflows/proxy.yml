@@ -108,16 +108,26 @@ jobs:
           set -euo pipefail
           HOST="${TUNNEL#https://}"
           TUNNEL_URI="vless://${TUNNEL_UUID}@${HOST}:443?encryption=none&security=tls&sni=${HOST}&fp=chrome&type=ws&host=${HOST}&path=%2F#Proxy"
-          python3 .proxy/check.py --extra "$TUNNEL_URI" \
-            --out /tmp/verify.txt --report /tmp/verify.report
-          cat /tmp/verify.report | tee dist/verify.txt
-          if [ ! -s /tmp/verify.txt ]; then
-            echo "::warning::tunnel is NOT reachable end to end"
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "ok=true" >> "$GITHUB_OUTPUT"
-          fi
+
+          # quick-tunnel DNS needs time to propagate right after creation
+          OK=false
+          for i in $(seq 1 12); do
+            echo "--- attempt ${i}/12 ---"
+            python3 .proxy/check.py --extra "$TUNNEL_URI" \
+              --out /tmp/verify.txt --report /tmp/verify.report || true
+            cat /tmp/verify.report
+            if [ -s /tmp/verify.txt ]; then OK=true; break; fi
+            sleep 15
+          done
+
+          cp /tmp/verify.report dist/verify.txt
           printf '%s\n' "$TUNNEL_URI" > dist/sub.txt
+          if [ "$OK" = true ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::tunnel is NOT reachable end to end after 12 attempts"
+          fi
 
       - name: Build site
         env:
@@ -163,6 +173,12 @@ jobs:
           git commit -q -m "site $(date -u +%FT%TZ)"
           git push -q --force \
             "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
+
+      - name: Fail if tunnel is not verified
+        if: steps.verify.outputs.ok != 'true'
+        run: |
+          echo "::error::tunnel failed end-to-end verification - see report.txt / verify.txt on Pages"
+          exit 1
 
       - name: Keep tunnel alive
         env:
