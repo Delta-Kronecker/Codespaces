@@ -95,24 +95,35 @@ jobs:
             tail -80 "$HOME/xray/log/xray.log" || true
           fi
 
-      - name: Start cloudflared quick tunnel
+      - name: Start ngrok tunnel
         id: tunnel
+        env:
+          NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
         run: |
           set -euo pipefail
-          curl -fsSL -o /tmp/cloudflared \
-            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-          chmod +x /tmp/cloudflared
-          nohup /tmp/cloudflared tunnel --url http://127.0.0.1:10000 --no-autoupdate \
-            >>"$HOME/xray/log/cloudflared.log" 2>&1 &
+          curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+            | sudo tee /etc/apt/keyrings/ngrok.asc >/dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/ngrok.asc] https://apt.ngrok.com/ngrok stable main" \
+            | sudo tee /etc/apt/sources.list.d/ngrok.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ngrok
+          ngrok version
+
+          ngrok config add-authtoken "$NGROK_AUTHTOKEN" >/dev/null
+
+          nohup ngrok http 127.0.0.1:10000 \
+            >>"$HOME/xray/log/ngrok.log" 2>&1 &
+
           URL=""
-          for _ in $(seq 1 90); do
-            URL=$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' "$HOME/xray/log/cloudflared.log" | head -1 || true)
+          for _ in $(seq 1 60); do
+            URL=$(curl -fsS http://127.0.0.1:4040/api/tunnels 2>/dev/null \
+                  | python3 -c "import sys,json;print(json.load(sys.stdin)['tunnels'][0]['public_url'])" 2>/dev/null || true)
             if [ -n "$URL" ]; then break; fi
             sleep 2
           done
           if [ -z "$URL" ]; then
-            echo "::error::cloudflared did not return a URL"
-            tail -60 "$HOME/xray/log/cloudflared.log"
+            echo "::error::ngrok did not return a URL"
+            tail -60 "$HOME/xray/log/ngrok.log" || true
             exit 1
           fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
@@ -128,15 +139,15 @@ jobs:
           HOST="${TUNNEL#https://}"
           TUNNEL_URI="vless://${TUNNEL_UUID}@${HOST}:443?encryption=none&security=tls&sni=${HOST}&fp=chrome&type=ws&host=${HOST}&path=%2F#Proxy"
 
-          # quick-tunnel DNS needs time to propagate right after creation
+          # first attempt may hit a cold agent; retry a few times
           OK=false
-          for i in $(seq 1 12); do
-            echo "--- attempt ${i}/12 ---"
+          for i in $(seq 1 8); do
+            echo "--- attempt ${i}/8 ---"
             python3 .proxy/check.py --extra "$TUNNEL_URI" \
               --out /tmp/verify.txt --report /tmp/verify.report || true
             cat /tmp/verify.report
             if [ -s /tmp/verify.txt ]; then OK=true; break; fi
-            sleep 15
+            sleep 10
           done
 
           cp /tmp/verify.report dist/verify.txt
@@ -145,9 +156,9 @@ jobs:
             echo "ok=true" >> "$GITHUB_OUTPUT"
           else
             echo "ok=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::tunnel is NOT reachable end to end after 12 attempts"
-            echo "--- cloudflared log ---"
-            tail -80 "$HOME/xray/log/cloudflared.log" || true
+            echo "::warning::tunnel is NOT reachable end to end after 8 attempts"
+            echo "--- ngrok log ---"
+            tail -80 "$HOME/xray/log/ngrok.log" || true
             echo "--- xray server log ---"
             tail -80 "$HOME/xray/log/xray.log" || true
           fi
