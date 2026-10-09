@@ -48,26 +48,45 @@ jobs:
           "$HOME/xray/xray" version | head -1
           echo "provider: $TUNNEL_PROVIDER"
 
-      - name: Generate REALITY keys
+      - name: Load or create REALITY keys
         if: env.TUNNEL_PROVIDER == 'bore'
         run: |
           set -euo pipefail
-          OUT=$("$HOME/xray/xray" x25519)
-          PRIV=$(printf '%s\n' "$OUT" | sed -n 's/.*[Pp]rivate[^:]*: *//p' | head -1)
-          PUB=$(printf '%s\n' "$OUT" | sed -n 's/.*[Pp]ublic[^:]*: *//p' | head -1)
-          SID=$(openssl rand -hex 8)
+          F=.proxy/reality.json
+          if [ -f "$F" ]; then
+            echo "reusing existing REALITY keys"
+            read -r PRIV PUB SID SNI < <(python3 -c "
+          import json
+          d = json.load(open('.proxy/reality.json'))
+          print(d['private'], d['public'], d['sid'], d.get('sni', 'addons.mozilla.org'))
+          ")
+          else
+            OUT=$("$HOME/xray/xray" x25519)
+            PRIV=$(printf '%s\n' "$OUT" | sed -n 's/.*[Pp]rivate[^:]*: *//p' | head -1)
+            PUB=$(printf '%s\n' "$OUT" | sed -n 's/.*[Pp]ublic[^:]*: *//p' | head -1)
+            SID=$(openssl rand -hex 8)
+            SNI=addons.mozilla.org
+            python3 -c "
+          import json, sys
+          json.dump({'private': sys.argv[1], 'public': sys.argv[2], 'sid': sys.argv[3], 'sni': sys.argv[4]},
+                    open('.proxy/reality.json', 'w'), indent=2)
+          " "$PRIV" "$PUB" "$SID" "$SNI"
+            git add .proxy/reality.json
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -q -m "Persist REALITY keys"
+            git push -q origin HEAD:main
+            echo "generated and persisted new REALITY keys"
+          fi
           if [ -z "$PRIV" ] || [ -z "$PUB" ] || [ -z "$SID" ]; then
-            echo "::error::could not generate REALITY keys"
+            echo "::error::could not load REALITY keys"
             exit 1
           fi
           echo "::add-mask::$PRIV"
-          echo "::add-mask::$PUB"
-          echo "::add-mask::$SID"
-          echo "REALITY keys generated (sid=$SID)"
+          echo "REALITY sid=$SID sni=$SNI"
           echo "PRIV=$PRIV"   >> "$GITHUB_ENV"
           echo "PUB=$PUB"     >> "$GITHUB_ENV"
           echo "SID=$SID"     >> "$GITHUB_ENV"
-          echo "SNI=addons.mozilla.org" >> "$GITHUB_ENV"
+          echo "SNI=$SNI"     >> "$GITHUB_ENV"
 
       - name: Test every upstream through a proxy
         run: |
@@ -167,13 +186,21 @@ jobs:
 
           LOG="$HOME/xray/log/bore.log"
           : > "$LOG"
-          nohup bore local "$BORE_LOCAL_PORT" --to bore.pub --port "$BORE_REMOTE_PORT" \
-            >>"$LOG" 2>&1 &
-          sleep 4
-          if ! grep -q 'bore\.pub:[0-9]' "$LOG"; then
-            echo "fixed port ${BORE_REMOTE_PORT} unavailable, falling back to a random one"
+          STARTED=""
+          for P in 443 "$BORE_REMOTE_PORT"; do
+            echo "trying remote port $P"
+            nohup bore local "$BORE_LOCAL_PORT" --to bore.pub --port "$P" >>"$LOG" 2>&1 &
+            sleep 5
+            if grep -q "bore\.pub:${P}\b" "$LOG"; then
+              STARTED=$P
+              break
+            fi
+            echo "port $P unavailable"
             pkill -f 'bore loca[l]' || true
             sleep 1
+          done
+          if [ -z "$STARTED" ]; then
+            echo "fixed ports unavailable, falling back to a random one"
             nohup bore local "$BORE_LOCAL_PORT" --to bore.pub >>"$LOG" 2>&1 &
           fi
 
