@@ -189,16 +189,18 @@ jobs:
           : > "$LOG"
           STARTED=""
           for P in 443 "$BORE_REMOTE_PORT"; do
-            echo "trying remote port $P"
-            nohup bore local "$BORE_LOCAL_PORT" --to bore.pub --port "$P" >>"$LOG" 2>&1 &
-            sleep 5
-            if grep -q "bore\.pub:${P}\b" "$LOG"; then
-              STARTED=$P
-              break
-            fi
-            echo "port $P unavailable"
-            pkill -f 'bore loca[l]' || true
-            sleep 1
+            for attempt in 1 2 3; do
+              echo "trying remote port $P (attempt ${attempt}/3)"
+              nohup bore local "$BORE_LOCAL_PORT" --to bore.pub --port "$P" >>"$LOG" 2>&1 &
+              sleep 6
+              if pgrep -f 'bore loca[l]' >/dev/null && grep -q "bore\.pub:${P}" "$LOG"; then
+                STARTED=$P
+                echo "bound to bore.pub:$P"
+                break 2
+              fi
+              pkill -f 'bore loca[l]' || true
+              sleep 8
+            done
           done
           if [ -z "$STARTED" ]; then
             echo "fixed ports unavailable, falling back to a random one"
@@ -207,7 +209,10 @@ jobs:
 
           ENDPOINT=""
           for _ in $(seq 1 40); do
-            ENDPOINT=$(grep -Eo 'bore\.pub:[0-9]+' "$LOG" | head -1 || true)
+            if ! pgrep -f 'bore loca[l]' >/dev/null; then
+              break
+            fi
+            ENDPOINT=$(grep -Eo 'bore\.pub:[0-9]+' "$LOG" | tail -1 || true)
             if [ -n "$ENDPOINT" ]; then break; fi
             sleep 2
           done
