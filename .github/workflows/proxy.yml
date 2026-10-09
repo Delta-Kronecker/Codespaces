@@ -7,6 +7,10 @@ on:
         description: "Keep the tunnel alive for N hours (max 6)"
         required: false
         default: "5"
+      tunnel:
+        description: "Tunnel provider: bore (no data cap) or ngrok (1GB/month)"
+        required: false
+        default: "bore"
   schedule:
     - cron: "17 */5 * * *"
 
@@ -16,6 +20,13 @@ permissions:
 concurrency:
   group: public-proxy
   cancel-in-progress: false
+
+env:
+  TUNNEL_PROVIDER: ${{ github.event.inputs.tunnel || 'bore' }}
+  TUNNEL_UUID: ca52e2b6-fb9f-4dac-b6dc-49da9923f251
+  BORE_LOCAL_PORT: "20000"
+  BORE_REMOTE_PORT: "20123"
+  NGROK_LOCAL_PORT: "10000"
 
 jobs:
   proxy:
@@ -35,6 +46,25 @@ jobs:
           python3 -c "import zipfile,os; zipfile.ZipFile('/tmp/xray.zip').extractall(os.path.expanduser('~/xray'))"
           chmod +x "$HOME/xray/xray"
           "$HOME/xray/xray" version | head -1
+          echo "provider: $TUNNEL_PROVIDER"
+
+      - name: Generate REALITY keys
+        if: env.TUNNEL_PROVIDER == 'bore'
+        run: |
+          set -euo pipefail
+          OUT=$("$HOME/xray/xray" x25519)
+          echo "$OUT"
+          PRIV=$(printf '%s\n' "$OUT" | sed -n 's/.*[Pp]rivate[^:]*: *//p' | head -1)
+          PUB=$(printf '%s\n' "$OUT" | sed -n 's/.*[Pp]ublic[^:]*: *//p' | head -1)
+          SID=$(openssl rand -hex 8)
+          if [ -z "$PRIV" ] || [ -z "$PUB" ]; then
+            echo "::error::could not parse x25519 output"
+            exit 1
+          fi
+          echo "priv=$PRIV"   >> "$GITHUB_ENV"
+          echo "pub=$PUB"     >> "$GITHUB_ENV"
+          echo "sid=$SID"     >> "$GITHUB_ENV"
+          echo "sni=addons.mozilla.org" >> "$GITHUB_ENV"
 
       - name: Test every upstream through a proxy
         run: |
@@ -55,22 +85,31 @@ jobs:
           set -euo pipefail
           CHAIN="$(head -n1 dist/upstreams.txt)"
           echo "Chaining to: $CHAIN"
-          python3 .proxy/check.py --emit-server "$CHAIN" \
-            --emit-out "$HOME/xray/server.json" \
-            --emit-listen 0.0.0.0 --emit-port 10000
+          if [ "$TUNNEL_PROVIDER" = "bore" ]; then
+            python3 .proxy/check.py --emit-server "$CHAIN" \
+              --emit-out "$HOME/xray/server.json" \
+              --emit-listen 127.0.0.1 --emit-port "$BORE_LOCAL_PORT" \
+              --emit-mode reality \
+              --emit-private "$PRIV" --emit-sid "$SID" --emit-sni "$SNI"
+          else
+            python3 .proxy/check.py --emit-server "$CHAIN" \
+              --emit-out "$HOME/xray/server.json" \
+              --emit-listen 0.0.0.0 --emit-port "$NGROK_LOCAL_PORT" \
+              --emit-mode ws
+          fi
           python3 -m json.tool "$HOME/xray/server.json" > /dev/null
-          echo "chain=$CHAIN" >> "$GITHUB_ENV"
 
       - name: Start Xray server
         run: |
           set -euo pipefail
+          PORT="$([ "$TUNNEL_PROVIDER" = "bore" ] && echo "$BORE_LOCAL_PORT" || echo "$NGROK_LOCAL_PORT")"
           nohup "$HOME/xray/xray" run -c "$HOME/xray/server.json" \
             >>"$HOME/xray/log/xray.log" 2>&1 &
           for _ in $(seq 1 20); do
-            ss -ltn | grep -q ':10000 ' && break
+            ss -ltn | grep -q ":${PORT} " && break
             sleep 1
           done
-          if ! ss -ltn | grep -q ':10000 '; then
+          if ! ss -ltn | grep -q ":${PORT} "; then
             echo "::error::xray server did not start"
             tail -40 "$HOME/xray/log/xray.log"
             exit 1
@@ -78,11 +117,13 @@ jobs:
 
       - name: Diagnose chain without the tunnel
         id: chain
-        env:
-          TUNNEL_UUID: ca52e2b6-fb9f-4dac-b6dc-49da9923f251
         run: |
           set -euo pipefail
-          U="vless://${TUNNEL_UUID}@127.0.0.1:10000?encryption=none&security=none&type=ws&path=%2F#local-chain"
+          if [ "$TUNNEL_PROVIDER" = "bore" ]; then
+            U="vless://${TUNNEL_UUID}@127.0.0.1:${BORE_LOCAL_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${PUB}&sid=${SID}&type=tcp&headerType=none#local-chain"
+          else
+            U="vless://${TUNNEL_UUID}@127.0.0.1:${NGROK_LOCAL_PORT}?encryption=none&security=none&type=ws&path=%2F#local-chain"
+          fi
           python3 .proxy/check.py --extra "$U" --out /tmp/chain.txt --report /tmp/chain.report || true
           cat /tmp/chain.report
           if [ -s /tmp/chain.txt ]; then
@@ -95,8 +136,61 @@ jobs:
             tail -80 "$HOME/xray/log/xray.log" || true
           fi
 
+      - name: Start bore tunnel
+        id: bore
+        if: env.TUNNEL_PROVIDER == 'bore'
+        run: |
+          set -euo pipefail
+          LATEST=$(curl -fsSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/ekzhang/bore/releases/latest)
+          URL=$(printf '%s' "$LATEST" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          for a in d['assets']:
+              n = a['name']
+              if n.endswith('.tar.gz') and 'x86_64-unknown-linux' in n:
+                  print(a['browser_download_url']); break
+          ")
+          if [ -z "$URL" ]; then
+            echo "::error::no bore linux asset found"
+            printf '%s' "$LATEST" | head -40
+            exit 1
+          fi
+          echo "downloading $URL"
+          curl -fsSL -o /tmp/bore.tgz "$URL"
+          tar xzf /tmp/bore.tgz -C /tmp
+          sudo install -m755 /tmp/bore /usr/local/bin/bore
+          bore --version || true
+
+          LOG="$HOME/xray/log/bore.log"
+          : > "$LOG"
+          nohup bore local "$BORE_LOCAL_PORT" --to bore.pub --port "$BORE_REMOTE_PORT" \
+            >>"$LOG" 2>&1 &
+          sleep 4
+          if ! grep -q 'bore\.pub:[0-9]' "$LOG"; then
+            echo "fixed port ${BORE_REMOTE_PORT} unavailable, falling back to a random one"
+            pkill -f 'bore loca[l]' || true
+            sleep 1
+            nohup bore local "$BORE_LOCAL_PORT" --to bore.pub >>"$LOG" 2>&1 &
+          fi
+
+          ENDPOINT=""
+          for _ in $(seq 1 40); do
+            ENDPOINT=$(grep -Eo 'bore\.pub:[0-9]+' "$LOG" | head -1 || true)
+            if [ -n "$ENDPOINT" ]; then break; fi
+            sleep 2
+          done
+          if [ -z "$ENDPOINT" ]; then
+            echo "::error::bore did not report a public endpoint"
+            tail -60 "$LOG" || true
+            exit 1
+          fi
+          echo "url=$ENDPOINT" >> "$GITHUB_OUTPUT"
+          echo "Tunnel: $ENDPOINT"
+
       - name: Start ngrok tunnel
-        id: tunnel
+        id: ngrok
+        if: env.TUNNEL_PROVIDER != 'bore'
         env:
           NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
         run: |
@@ -132,10 +226,9 @@ jobs:
           install_ngrok
           command -v ngrok
           ngrok version
-
           ngrok config add-authtoken "$NGROK_AUTHTOKEN" >/dev/null
 
-          nohup ngrok http 127.0.0.1:10000 \
+          nohup ngrok http 127.0.0.1:"$NGROK_LOCAL_PORT" \
             >>"$HOME/xray/log/ngrok.log" 2>&1 &
 
           URL=""
@@ -156,14 +249,19 @@ jobs:
       - name: Verify end to end through the tunnel
         id: verify
         env:
-          TUNNEL: ${{ steps.tunnel.outputs.url }}
-          TUNNEL_UUID: ca52e2b6-fb9f-4dac-b6dc-49da9923f251
+          TUNNEL: ${{ env.TUNNEL_PROVIDER == 'bore' && steps.bore.outputs.url || steps.ngrok.outputs.url }}
         run: |
           set -euo pipefail
-          HOST="${TUNNEL#https://}"
-          TUNNEL_URI="vless://${TUNNEL_UUID}@${HOST}:443?encryption=none&security=tls&sni=${HOST}&fp=chrome&type=ws&host=${HOST}&path=%2F#Proxy"
+          if [ "$TUNNEL_PROVIDER" = "bore" ]; then
+            HOST="${TUNNEL%%:*}"
+            PORT="${TUNNEL##*:}"
+            TUNNEL_URI="vless://${TUNNEL_UUID}@${HOST}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${PUB}&sid=${SID}&type=tcp&headerType=none#Proxy"
+          else
+            HOST="${TUNNEL#https://}"
+            TUNNEL_URI="vless://${TUNNEL_UUID}@${HOST}:443?encryption=none&security=tls&sni=${HOST}&fp=chrome&type=ws&host=${HOST}&path=%2F#Proxy"
+          fi
+          echo "URI: $TUNNEL_URI"
 
-          # first attempt may hit a cold agent; retry a few times
           OK=false
           for i in $(seq 1 8); do
             echo "--- attempt ${i}/8 ---"
@@ -181,15 +279,16 @@ jobs:
           else
             echo "ok=false" >> "$GITHUB_OUTPUT"
             echo "::warning::tunnel is NOT reachable end to end after 8 attempts"
-            echo "--- ngrok log ---"
-            tail -80 "$HOME/xray/log/ngrok.log" || true
+            echo "--- tunnel log ---"
+            tail -80 "$HOME/xray/log/bore.log" 2>/dev/null || true
+            tail -80 "$HOME/xray/log/ngrok.log" 2>/dev/null || true
             echo "--- xray server log ---"
             tail -80 "$HOME/xray/log/xray.log" || true
           fi
 
       - name: Build site
         env:
-          TUNNEL: ${{ steps.tunnel.outputs.url }}
+          TUNNEL: ${{ env.TUNNEL_PROVIDER == 'bore' && steps.bore.outputs.url || steps.ngrok.outputs.url }}
         run: |
           set -euo pipefail
           export TUNNEL \

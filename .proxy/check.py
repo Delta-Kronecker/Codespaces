@@ -156,34 +156,65 @@ def probe(e, port: int):
         os.unlink(path)
 
 
-def emit_server(uri: str, out_path: str, listen: str, port: int):
+def emit_server(uri, out_path, listen, port, mode="ws", reality=None):
     e = parse(uri)
     if e is None:
         raise SystemExit(f"cannot parse: {uri}")
+
+    if mode == "reality":
+        if not reality or not reality.get("private") or not reality.get("sid"):
+            raise SystemExit("--emit-mode reality requires --emit-private and --emit-sid")
+        sni = reality.get("sni") or "addons.mozilla.org"
+        inbound = {
+            "tag": "public-reality",
+            "port": port,
+            "listen": listen,
+            "protocol": "vless",
+            "settings": {
+                "clients": [
+                    {"id": TUNNEL_UUID, "flow": "xtls-rprx-vision", "level": 0}
+                ],
+                "decryption": "none",
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "show": False,
+                    "dest": f"{sni}:443",
+                    "xver": 0,
+                    "serverNames": [sni],
+                    "privateKey": reality["private"],
+                    "shortIds": [reality["sid"]],
+                },
+            },
+            "sniffing": {"enabled": True, "destOverride": ["http", "tls"]},
+        }
+    else:
+        inbound = {
+            "tag": "public-ws",
+            "port": port,
+            "listen": listen,
+            "protocol": "vless",
+            "settings": {
+                "clients": [{"id": TUNNEL_UUID, "flow": "", "level": 0}],
+                "decryption": "none",
+            },
+            "streamSettings": {
+                "network": "ws",
+                "security": "none",
+                "wsSettings": {"path": "/"},
+            },
+            "sniffing": {"enabled": True, "destOverride": ["http", "tls"]},
+        }
+
     cfg = {
         "log": {"loglevel": "warning"},
-        "inbounds": [
-            {
-                "tag": "public-ws",
-                "port": port,
-                "listen": listen,
-                "protocol": "vless",
-                "settings": {
-                    "clients": [{"id": TUNNEL_UUID, "flow": "", "level": 0}],
-                    "decryption": "none",
-                },
-                "streamSettings": {
-                    "network": "ws",
-                    "security": "none",
-                    "wsSettings": {"path": "/"},
-                },
-                "sniffing": {"enabled": True, "destOverride": ["http", "tls"]},
-            }
-        ],
+        "inbounds": [inbound],
         "outbounds": [build_outbound(e)],
     }
     Path(out_path).write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-    print(f"server config -> {out_path}  (upstream {e['endpoint']} {e['network']})")
+    print(f"server config -> {out_path}  (mode={mode}, upstream {e['endpoint']} {e['network']})")
 
 
 def main():
@@ -197,12 +228,28 @@ def main():
     ap.add_argument("--emit-out")
     ap.add_argument("--emit-listen", default="0.0.0.0")
     ap.add_argument("--emit-port", type=int, default=10000)
+    ap.add_argument("--emit-mode", choices=["ws", "reality"], default="ws")
+    ap.add_argument("--emit-private")
+    ap.add_argument("--emit-sid")
+    ap.add_argument("--emit-sni", default="addons.mozilla.org")
     args = ap.parse_args()
 
     if args.emit_server:
         if not args.emit_out:
             raise SystemExit("--emit-server requires --emit-out")
-        emit_server(args.emit_server, args.emit_out, args.emit_listen, args.emit_port)
+        reality = {
+            "private": args.emit_private,
+            "sid": args.emit_sid,
+            "sni": args.emit_sni,
+        }
+        emit_server(
+            args.emit_server,
+            args.emit_out,
+            args.emit_listen,
+            args.emit_port,
+            args.emit_mode,
+            reality if args.emit_mode == "reality" else None,
+        )
         return
 
     uris = []
