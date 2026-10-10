@@ -1,0 +1,36 @@
+generated: 2026-10-10T23:35:52Z
+total: 26   healthy: 25
+
+OK    2.27.71.48:443                     tcp/reality  http 204    0.64s
+OK    62.210.91.2:23576                  tcp/reality  http 204    0.50s
+OK    157.228.128.59:443                 tcp/reality  http 204   10.16s
+OK    51.158.206.34:23576                tcp/reality  http 204    0.46s
+OK    2.59.253.251:443                   tcp/reality  http 204    0.56s
+OK    2.27.39.233:443                    tcp/reality  http 204    0.58s
+OK    51.158.206.12:23576                tcp/reality  http 204    0.45s
+OK    51.158.206.80:23576                tcp/reality  http 204    0.46s
+OK    62.210.91.10:23576                 tcp/reality  http 204    0.52s
+OK    31.59.210.24:2087                  grpc/reality  http 204    0.89s
+OK    38.207.130.15:443                  tcp/reality  http 204    0.98s
+OK    ge-s-1.pythonmakemigreat.wiki:443  tcp/reality  http 204    0.54s
+OK    45.32.152.194:443                  tcp/reality  http 204    0.72s
+FAIL  81.177.215.175:443                 tcp/reality  http 000 curl: (28) Connection timed out after 12002 milliseconds 12.01s
+OK    78.135.73.47:443                   tcp/reality  http 204    0.75s
+OK    195.123.213.28:443                 tcp/reality  http 204    7.53s
+OK    177.1.192.72:443                   tcp/reality  http 204    0.56s
+OK    156.226.168.221:35193              tcp/reality  http 204    1.10s
+OK    148.113.5.44:443                   tcp/reality  http 204    0.87s
+OK    5.253.28.240:40443                 tcp/reality  http 204    0.86s
+OK    144.31.93.231:443                  tcp/reality  http 204    1.09s
+OK    3.114.220.22:19645                 tcp/reality  http 204    0.58s
+OK    38.207.130.15:443                  tcp/reality  http 204    0.57s
+OK    157.228.155.185:443                tcp/reality  http 204    0.47s
+OK    169.40.42.235:443                  tcp/reality  http 204    0.27s
+OK    13.143.137.206:443                 tcp/reality  http 204    1.36s
+
+fastest first:
+   0.27s  169.40.42.235:443
+   0.45s  51.158.206.12:23576
+   0.46s  51.158.206.34:23576
+   0.46s  51.158.206.80:23576
+   0.47s  157.228.155.185:443

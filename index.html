@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Proxy</title>
+<style>
+  body{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0d1117;color:#c9d1d9;
+       margin:0;padding:2rem;max-width:64rem;margin-inline:auto;line-height:1.8}
+  h1{font-size:1.15rem;color:#58a6ff;margin-top:0}
+  a{color:#58a6ff;word-break:break-all}
+  .box{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;margin:1rem 0}
+  .lbl{color:#8b949e;font-size:.8rem;margin-bottom:.4rem}
+  pre{white-space:pre-wrap;word-break:break-all;background:#21262d;padding:.8rem;border-radius:6px;
+      border:1px solid #30363d;font-size:.75rem;margin:.4rem 0 0;direction:ltr;text-align:left}
+</style>
+</head>
+<body>
+<h1>پروکسی — اتصال از طریق تونل</h1>
+
+<div class="box">
+  <div class="lbl">SUBSCRIPTION (only the tunnel)</div>
+  <a href="sub.txt">https://Delta-Kronecker.github.io/Codespaces/sub.txt</a>
+  <pre>vless://ca52e2b6-fb9f-4dac-b6dc-49da9923f251@bore.pub:20123?encryption=none&flow=xtls-rprx-vision&security=reality&sni=addons.mozilla.org&fp=chrome&pbk=WJGeMMoNqsRgo7LywnwgsEGOpPW81DLzQ_-JG1ubygE&sid=3717324f68df85b4&type=tcp&headerType=none#Proxy</pre>
+</div>
+
+<div class="box">
+  <div class="lbl">VERIFY — end to end through the tunnel</div>
+  <pre>generated: 2026-10-10T23:36:56Z
+total: 1   healthy: 1
+
+OK    bore.pub:20123                     tcp/reality  http 204    7.76s
+
+fastest first:
+   7.76s  bore.pub:20123</pre>
+</div>
+
+<div class="box">
+  <div class="lbl">UPSTREAMS — chained behind the tunnel (25/26 alive)</div>
+  <pre>generated: 2026-10-10T23:35:52Z
+total: 26   healthy: 25
+
+OK    2.27.71.48:443                     tcp/reality  http 204    0.64s
+OK    62.210.91.2:23576                  tcp/reality  http 204    0.50s
+OK    157.228.128.59:443                 tcp/reality  http 204   10.16s
+OK    51.158.206.34:23576                tcp/reality  http 204    0.46s
+OK    2.59.253.251:443                   tcp/reality  http 204    0.56s
+OK    2.27.39.233:443                    tcp/reality  http 204    0.58s
+OK    51.158.206.12:23576                tcp/reality  http 204    0.45s
+OK    51.158.206.80:23576                tcp/reality  http 204    0.46s
+OK    62.210.91.10:23576                 tcp/reality  http 204    0.52s
+OK    31.59.210.24:2087                  grpc/reality  http 204    0.89s
+OK    38.207.130.15:443                  tcp/reality  http 204    0.98s
+OK    ge-s-1.pythonmakemigreat.wiki:443  tcp/reality  http 204    0.54s
+OK    45.32.152.194:443                  tcp/reality  http 204    0.72s
+FAIL  81.177.215.175:443                 tcp/reality  http 000 curl: (28) Connection timed out after 12002 milliseconds 12.01s
+OK    78.135.73.47:443                   tcp/reality  http 204    0.75s
+OK    195.123.213.28:443                 tcp/reality  http 204    7.53s
+OK    177.1.192.72:443                   tcp/reality  http 204    0.56s
+OK    156.226.168.221:35193              tcp/reality  http 204    1.10s
+OK    148.113.5.44:443                   tcp/reality  http 204    0.87s
+OK    5.253.28.240:40443                 tcp/reality  http 204    0.86s
+OK    144.31.93.231:443                  tcp/reality  http 204    1.09s
+OK    3.114.220.22:19645                 tcp/reality  http 204    0.58s
+OK    38.207.130.15:443                  tcp/reality  http 204    0.57s
+OK    157.228.155.185:443                tcp/reality  http 204    0.47s
+OK    169.40.42.235:443                  tcp/reality  http 204    0.27s
+OK    13.143.137.206:443                 tcp/reality  http 204    1.36s
+
+fastest first:
+   0.27s  169.40.42.235:443
+   0.45s  51.158.206.12:23576
+   0.46s  51.158.206.34:23576
+   0.46s  51.158.206.80:23576
+   0.47s  157.228.155.185:443</pre>
+</div>
+
+<div class="box">
+  <div class="lbl">tunnel</div>
+  <a href="bore.pub:20123">bore.pub:20123</a>
+  <pre>2026-10-10T23:36:56Z</pre>
+</div>
+</body>
+</html>
