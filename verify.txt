@@ -1,0 +1,7 @@
+generated: 2026-10-17T19:01:51Z
+total: 1   healthy: 1
+
+OK    bore.pub:20123                     tcp/reality  http 204    0.49s
+
+fastest first:
+   0.49s  bore.pub:20123

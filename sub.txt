@@ -1,0 +1,1 @@
+vless://ca52e2b6-fb9f-4dac-b6dc-49da9923f251@bore.pub:20123?encryption=none&flow=xtls-rprx-vision&security=reality&sni=addons.mozilla.org&fp=chrome&pbk=WJGeMMoNqsRgo7LywnwgsEGOpPW81DLzQ_-JG1ubygE&sid=3717324f68df85b4&type=tcp&headerType=none#Proxy
