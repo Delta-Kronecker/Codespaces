@@ -1,0 +1,36 @@
+generated: 2026-10-31T05:48:40Z
+total: 26   healthy: 10
+
+FAIL  2.27.71.48:443                     tcp/reality  http 000 curl: (35) Recv failure: Connection reset by peer  2.55s
+OK    62.210.91.2:23576                  tcp/reality  http 204    0.45s
+FAIL  157.228.128.59:443                 tcp/reality  http 000 curl: (28) Connection timed out after 12002 milliseconds 12.01s
+OK    51.158.206.34:23576                tcp/reality  http 204    0.41s
+FAIL  2.59.253.251:443                   tcp/reality  http 000 curl: (35) OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to www  0.35s
+FAIL  2.27.39.233:443                    tcp/reality  http 000 curl: (35) Recv failure: Connection reset by peer  3.15s
+OK    51.158.206.12:23576                tcp/reality  http 204    0.41s
+OK    51.158.206.80:23576                tcp/reality  http 204    0.42s
+OK    62.210.91.10:23576                 tcp/reality  http 204    0.45s
+FAIL  31.59.210.24:2087                  grpc/reality  http 000 curl: (35) Recv failure: Connection reset by peer  7.02s
+FAIL  38.207.130.15:443                  tcp/reality  http 000 curl: (35) Recv failure: Connection reset by peer  3.78s
+FAIL  ge-s-1.pythonmakemigreat.wiki:443  tcp/reality  http 000 curl: (28) Connection timed out after 12002 milliseconds 12.01s
+FAIL  45.32.152.194:443                  tcp/reality  http 000 curl: (28) Connection timed out after 12002 milliseconds 12.01s
+FAIL  81.177.215.175:443                 tcp/reality  http 000 curl: (28) Connection timed out after 12001 milliseconds 12.01s
+OK    78.135.73.47:443                   tcp/reality  http 204    0.69s
+OK    195.123.213.28:443                 tcp/reality  http 204    0.57s
+FAIL  177.1.192.72:443                   tcp/reality  http 000 curl: (35) OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to www  0.40s
+FAIL  156.226.168.221:35193              tcp/reality  http 000 curl: (28) Connection timed out after 12002 milliseconds 12.01s
+FAIL  148.113.5.44:443                   tcp/reality  http 000 curl: (35) Recv failure: Connection reset by peer  3.06s
+OK    5.253.28.240:40443                 tcp/reality  http 204    1.06s
+FAIL  144.31.93.231:443                  tcp/reality  http 000 curl: (35) OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to www  3.09s
+OK    3.114.220.22:19645                 tcp/reality  http 204    0.91s
+FAIL  38.207.130.15:443                  tcp/reality  http 000 curl: (35) Recv failure: Connection reset by peer  3.60s
+FAIL  157.228.155.185:443                tcp/reality  http 000 curl: (28) Connection timed out after 12002 milliseconds 12.01s
+OK    169.40.42.235:443                  tcp/reality  http 204    0.13s
+FAIL  13.143.137.206:443                 tcp/reality  http 000 curl: (28) Connection timed out after 12002 milliseconds 12.01s
+
+fastest first:
+   0.13s  169.40.42.235:443
+   0.41s  51.158.206.34:23576
+   0.41s  51.158.206.12:23576
+   0.42s  51.158.206.80:23576
+   0.45s  62.210.91.10:23576
